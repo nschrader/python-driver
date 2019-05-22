@@ -236,6 +236,10 @@ class UnixSocketEndPoint(EndPoint):
     def address(self):
         return self._unix_socket_path
 
+    @property
+    def port(self):
+        return None
+
     def resolve(self):
         return self.address, None
 
@@ -542,7 +546,7 @@ class Connection(object):
 
         if sockerr:
             raise socket.error(sockerr.errno, "Tried connecting to %s. Last error: %s" % (
-            [a[4] for a in addresses], sockerr.strerror or sockerr))
+                unix_socket_path, sockerr.strerror or sockerr))
 
         if self.sockopts:
             for args in self.sockopts:
