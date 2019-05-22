@@ -223,6 +223,39 @@ class DefaultEndPointFactory(EndPointFactory):
         return DefaultEndPoint(self.cluster.address_translator.translate(addr), 9042)  # will eventually support port
 
 
+@total_ordering
+class UnixSocketEndPoint(EndPoint):
+    """
+    Unix Socket EndPoint implementation..
+    """
+
+    def __init__(self, unix_socket_path):
+        self._unix_socket_path = unix_socket_path
+
+    @property
+    def address(self):
+        return self._unix_socket_path
+
+    def resolve(self):
+        return self.address, None
+
+    def __eq__(self, other):
+        return isinstance(other, UnixSocketEndPoint) and \
+               self._unix_socket_path == other._unix_socket_path
+
+    def __hash__(self):
+        return hash(self._unix_socket_path)
+
+    def __lt__(self, other):
+        return self._unix_socket_path < other._unix_socket_path
+
+    def __str__(self):
+        return str("%s" % (self._unix_socket_path,))
+
+    def __repr__(self):
+        return "<%s: %s>" % (self.__class__.__name__, self._unix_socket_path)
+
+
 class _Frame(object):
     def __init__(self, version, flags, stream, opcode, body_offset, end_pos):
         self.version = version
@@ -481,12 +514,49 @@ class Connection(object):
         else:
             return conn
 
+    # test purpose
+    def _connect_unix_socket(self):
+        sockerr = None
+
+        unix_socket_path, _ = self.endpoint.resolve()
+        try:
+            self._socket = self._socket_impl.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            if self.ssl_context:
+                self._socket = self.ssl_context.wrap_socket(self._socket,
+                                                            **(self.ssl_options or {}))
+            elif self.ssl_options:
+                if not self._ssl_impl:
+                    raise RuntimeError("This version of Python was not compiled with SSL support")
+                self._socket = self._ssl_impl.wrap_socket(self._socket, **self.ssl_options)
+            self._socket.settimeout(self.connect_timeout)
+            self._socket.connect(unix_socket_path)
+            self._socket.settimeout(None)
+            if self._check_hostname:
+                ssl.match_hostname(self._socket.getpeercert(), self.endpoint.address)
+            sockerr = None
+        except socket.error as err:
+            if self._socket:
+                self._socket.close()
+                self._socket = None
+            sockerr = err
+
+        if sockerr:
+            raise socket.error(sockerr.errno, "Tried connecting to %s. Last error: %s" % (
+            [a[4] for a in addresses], sockerr.strerror or sockerr))
+
+        if self.sockopts:
+            for args in self.sockopts:
+                self._socket.setsockopt(*args)
+
     def _connect_socket(self):
+        if isinstance(self.endpoint, UnixSocketEndPoint):
+            return self._connect_unix_socket()
+
         sockerr = None
         inet_address, port = self.endpoint.resolve()
         addresses = socket.getaddrinfo(inet_address, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
         if not addresses:
-            raise ConnectionException("getaddrinfo returned empty list for %s" % (self.endpoint,))
+           raise ConnectionException("getaddrinfo returned empty list for %s" % (self.endpoint,))
         for (af, socktype, proto, canonname, sockaddr) in addresses:
             try:
                 self._socket = self._socket_impl.socket(af, socktype, proto)

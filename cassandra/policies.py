@@ -424,8 +424,8 @@ class WhiteListRoundRobinPolicy(RoundRobinPolicy):
         connections to.
         """
         self._allowed_hosts = hosts
-        self._allowed_hosts_resolved = [endpoint[4][0] for a in self._allowed_hosts
-                                        for endpoint in socket.getaddrinfo(a, None, socket.AF_UNSPEC, socket.SOCK_STREAM)]
+        self._allowed_hosts_resolved = hosts #[endpoint[4][0] for a in self._allowed_hosts
+                                        #for endpoint in socket.getaddrinfo(a, None, socket.AF_UNSPEC, socket.SOCK_STREAM)]
 
         RoundRobinPolicy.__init__(self)
 
