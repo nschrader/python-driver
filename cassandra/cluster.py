@@ -3726,6 +3726,7 @@ class ResponseFuture(object):
             # event loop thread just receiving the waited message
             # If it arrives after this, it will be ignored
             except KeyError:
+                print "Shit is happening here, won't rise OperationTimeout"
                 return
 
             pool = self.session._pools.get(self._current_host)
