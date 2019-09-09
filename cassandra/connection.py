@@ -555,8 +555,10 @@ class Connection(object):
         with self.lock:
             requests = self._requests
             self._requests = {}
+            print "Removed all requests from connection"
 
         if not requests:
+            print requests
             return
 
         new_exc = ConnectionShutdown(str(exc))
@@ -570,6 +572,7 @@ class Connection(object):
 
         # run first callback from this thread to ensure pool state before leaving
         cb, _, _ = requests.popitem()[1]
+        print "Got first callback " + str(cb)
         try_callback(cb)
 
         if not requests:
@@ -580,6 +583,7 @@ class Connection(object):
         # want to tie up the event thread when there are many requests
         def err_all_callbacks():
             for cb, _, _ in requests.values():
+                print "Got another callback " + str(cb)
                 try_callback(cb)
         if len(requests) < Connection.CALLBACK_ERR_THREAD_THRESHOLD:
             err_all_callbacks()
