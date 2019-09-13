@@ -3704,6 +3704,8 @@ class ResponseFuture(object):
             self._timer.cancel()
 
     def _on_timeout(self, _attempts=0):
+        print("_on_timeout")
+        print(self._connection)
         """
         Called when the request associated with this ResponseFuture times out.
 
@@ -3720,6 +3722,7 @@ class ResponseFuture(object):
             return
 
         if self._connection is not None:
+            print(self._connection._requests)
             try:
                 self._connection._requests.pop(self._req_id)
             # PYTHON-1044

@@ -531,6 +531,7 @@ class Connection(object):
         raise NotImplementedError()
 
     def defunct(self, exc):
+        print("defunct " + self.host)
         with self.lock:
             if self.is_defunct or self.is_closed:
                 return

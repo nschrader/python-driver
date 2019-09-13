@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from tests.integration import PROTOCOL_VERSION
+from functools import wraps
 import time
 
 
@@ -96,3 +97,21 @@ def wait_until_not_raised(condition, delay, max_attempts):
 
     # last attempt, let the exception raise
     condition()
+
+
+def flaky(retries=3, wait=0):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            exp = None
+            for i in range(retries):
+                exp and time.sleep(wait)
+                try:
+                    return func(*args, **kwargs)
+                except AssertionError as e:
+                    exp = e
+                    print("Tempting a retry...")
+            else:
+                raise exp
+        return wrapper
+    return decorator

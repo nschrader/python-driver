@@ -87,7 +87,7 @@ def start_simulacron():
     SERVER_SIMULACRON.start()
 
     #TODO improve this sleep, maybe check the logs like ccm
-    time.sleep(5)
+    time.sleep(15)
 
 def stop_simulacron():
     SERVER_SIMULACRON.stop()
