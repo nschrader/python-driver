@@ -99,19 +99,11 @@ def wait_until_not_raised(condition, delay, max_attempts):
     condition()
 
 
-def flaky(retries=3, wait=0):
+def late(seconds=1):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            exp = None
-            for i in range(retries):
-                exp and time.sleep(wait)
-                try:
-                    return func(*args, **kwargs)
-                except AssertionError as e:
-                    exp = e
-                    print("Tempting a retry...")
-            else:
-                raise exp
+            time.sleep(seconds)
+            func(*args, **kwargs)
         return wrapper
     return decorator

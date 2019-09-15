@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import six
+
 try:
     import unittest2 as unittest
 except ImportError:
@@ -28,14 +30,14 @@ from cassandra.policies import HostStateListener, RoundRobinPolicy, ConstantReco
 from cassandra.io.asyncorereactor import AsyncoreConnection
 from tests import connection_class, thread_pool_executor_class
 from tests.integration import (PROTOCOL_VERSION, requiressimulacron)
-from tests.integration.util import assert_quiescent_pool_state, flaky
+from tests.integration.util import assert_quiescent_pool_state, late
 from tests.integration.simulacron import SimulacronBase
 from tests.integration.simulacron.utils import (NO_THEN, PrimeOptions,
                                                 prime_query, prime_request,
                                                 start_and_prime_cluster_defaults,
                                                 start_and_prime_singledc,
                                                 clear_queries, RejectConnections,
-                                                RejectType, AcceptConnections, SERVER_SIMULACRON)
+                                                RejectType, AcceptConnections)
 
 
 class TrackDownListener(HostStateListener):
@@ -189,34 +191,46 @@ class ConnectionTests(SimulacronBase):
         """
         start_and_prime_singledc()
 
+        # This is all about timing. We will need the query response future to time out and the heartbeat to defunct
+        # at the same moment. The latter will schedule a query retry to another node in case the pool is not
+        # already shut down.  If and only if the response future timeout falls in between the retry scheduling and
+        # its execution the deadlock occurs. The odds are low, so we need to help fate a bit:
+        # 1) Our query goes always to the same host
+        # 2) This host needs to defunct first
+        # 3) Open a small time window for the response future timeout, i.e. block executor threads for retry
         query_to_prime = "SELECT * from testkesypace.testtable"
+        query_host = "127.0.0.2"
         heartbeat_interval = 1
         heartbeat_timeout = 1
+        lag = 0.05
         never = 9999
 
-        class Kluster(Cluster):
+        class PatchedRoundRobinPolicy(RoundRobinPolicy):
+            def make_query_plan(self, working_keyspace=None, query=None):
+                print query
+                print self._live_hosts
+                if query and query.query_string == query_to_prime:
+                    return filter(lambda h: h == query_host, self._live_hosts)
+                else:
+                    return super(PatchedRoundRobinPolicy, self).make_query_plan()
+
+        class PatchedCluster(Cluster):
             def get_connection_holders(self):
-                # Make sure that request connection will timeout first
-                holders = super(Kluster, self).get_connection_holders()
-                return sorted(holders, reverse=True, key=lambda v: int(v._connection.host == "127.0.0.2"))
+                # Make sure that QUERY connection will timeout first
+                holders = super(PatchedCluster, self).get_connection_holders()
+                return sorted(holders, reverse=True, key=lambda v: int(v._connection.host == query_host))
 
             def connection_factory(self, *args, **kwargs):
-                conn = super(Kluster, self).connection_factory(*args, **kwargs)
-                defunct = conn.defunct
-                def defunct_lag(*cargs, **ckwargs):
-                    time.sleep(0.1)
-                    print("slow defunct")
-                    defunct(*cargs, **ckwargs)
-                conn.defunct = defunct_lag if conn.host[-1] == "3" else defunct
+                conn = super(PatchedCluster, self).connection_factory(*args, **kwargs)
+                conn.defunct = late(seconds=2*lag)(conn.defunct)
                 return conn
 
-        import cassandra.io.asyncorereactor
-        cluster = Kluster(
+        cluster = PatchedCluster(
             protocol_version=PROTOCOL_VERSION,
             compression=False,
             idle_heartbeat_interval=heartbeat_interval,
             idle_heartbeat_timeout=heartbeat_timeout,
-            connection_class=cassandra.io.asyncorereactor.AsyncoreConnection
+            load_balancing_policy=PatchedRoundRobinPolicy()
         )
         session = cluster.connect()
         self.addCleanup(cluster.shutdown)
@@ -226,16 +240,8 @@ class ConnectionTests(SimulacronBase):
         # Make heartbeat due
         time.sleep(heartbeat_interval)
 
-        # This is all about timing. We will need the query response future to timeout and the heartbeat to defunct
-        # at the same moment. The latter will schedule a query retry to another node. If and only if the response
-        # future timeout falls in between the retry scheduling and its execution the deadlock occurs. With
-        # AsyncoreConnection it is more likely to happen than with LibevConnection.
-        future = session.execute_async(query_to_prime, timeout=heartbeat_interval+heartbeat_timeout)
-        retry_task = future._retry_task
-        def retry_task_monkey_patch(*args, **kwargs):
-            time.sleep(0.2)
-            retry_task(*args, **kwargs)
-        future._retry_task = retry_task_monkey_patch
+        future = session.execute_async(query_to_prime, timeout=heartbeat_interval+heartbeat_timeout+3*lag)
+        future._retry_task = late(seconds=4*lag)(future._retry_task)
 
         prime_request(PrimeOptions(then={"result": "no_result", "delay_in_ms": never}))
         prime_request(RejectConnections("unbind"))
